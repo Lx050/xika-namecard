@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>席卡生成器 · 输入名字即出 PDF</title>
+<meta name="description" content="输入姓名，自动生成 A4 对折席卡 PDF，中文与英文名通用，可直接打印。">
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --text:#1f2328; --muted:#6b7280;
+    --accent:#2563eb; --accent-soft:#eff4ff; --warn:#b45309; --warn-bg:#fff7ed;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 20px 56px;}
+  h1{font-size:22px;margin:0 0 4px;}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:22px;}
+  .grid{display:grid;grid-template-columns:340px 1fr;gap:18px;align-items:start;}
+  @media (max-width:820px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;}
+  label{display:block;font-size:13px;font-weight:600;margin:0 0 6px;}
+  textarea{width:100%;height:200px;resize:vertical;padding:10px 12px;border:1px solid var(--line);
+           border-radius:8px;font:14px/1.7 inherit;outline:none;}
+  textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+  select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff;}
+  .row{display:flex;gap:10px;margin-top:12px;}
+  button{flex:1;padding:10px 14px;border-radius:8px;border:1px solid var(--accent);
+         background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;}
+  button.ghost{background:#fff;color:var(--text);border-color:var(--line);}
+  button:disabled{opacity:.55;cursor:default;}
+  .hint{font-size:12px;color:var(--muted);margin-top:10px;min-height:18px;}
+  .preview{height:620px;width:100%;border:1px solid var(--line);border-radius:8px;background:#fff;}
+  .empty{height:620px;display:flex;align-items:center;justify-content:center;text-align:center;
+         color:var(--muted);border:1px dashed var(--line);border-radius:8px;font-size:14px;padding:20px;}
+  .info{margin-top:12px;}
+  .info table{border-collapse:collapse;width:100%;}
+  .info td,.info th{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;font-size:13px;}
+  .info th{color:var(--muted);font-weight:600;}
+  .warn{background:var(--warn-bg);color:var(--warn);border:1px solid #fed7aa;border-radius:8px;
+        padding:8px 12px;font-size:13px;margin-top:12px;}
+  .tips{margin-top:18px;font-size:13px;color:var(--muted);line-height:1.9;}
+  .tips b{color:var(--text);}
+  .bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:8px;display:none;}
+  .bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>席卡生成器</h1>
+  <div class="sub">输入姓名 → 自动生成 A4 对折席卡 PDF（一页一人，可直接打印）· 全程在浏览器本地完成，不上传任何数据</div>
+
+  <div class="grid">
+    <div class="card">
+      <label for="names">姓名（每行一个，可一次输入多个）</label>
+      <textarea id="names" placeholder="兰小毅&#10;王业蕃&#10;William Liu"></textarea>
+
+      <label for="fontSel" style="margin-top:14px;">字体</label>
+      <select id="fontSel"></select>
+      <div class="bar" id="bar"><i></i></div>
+
+      <div class="row">
+        <button id="gen">生成 PDF</button>
+        <button class="ghost" id="demo">填入示例</button>
+      </div>
+      <div class="row">
+        <button class="ghost" id="dl" disabled>下载</button>
+        <button class="ghost" id="pr" disabled>打印</button>
+      </div>
+      <div class="hint" id="hint">字号按字体真实字宽自动计算，中文 2/3 字、英文名通用，无需手工调整。</div>
+    </div>
+
+    <div class="card">
+      <div id="slot" class="empty">生成后在此预览<br><span style="font-size:12px">（首次选择某字体需下载字体文件，之后会缓存）</span></div>
+      <iframe id="pv" class="preview" style="display:none" title="席卡预览"></iframe>
+      <div id="warn"></div>
+      <div id="info" class="info"></div>
+    </div>
+  </div>
+
+  <div class="tips">
+    <b>打印与折叠：</b>A4 纸、缩放 100%（别选“适应页面”）、单面打印；沿页面<b>水平中线</b>对折后立起来，
+    两面都是正立的同一个名字（上半是倒置的，这是刻意的设计）。
+  </div>
+</div>
+
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/fontkit.umd.min.js"></script>
+<script src="core.js"></script>
+<script>
+const FONTS = {
+  '黑体': 'fonts/SimHei.ttf',
+  '华文新魏': 'fonts/STXinwei.ttf',
+  '华文中宋': 'fonts/STZhongson.ttf',
+};
+const $ = id => document.getElementById(id);
+const fontCache = new Map();
+let blobUrl = null;
+
+// 字体下拉
+const sel = $('fontSel');
+Object.keys(FONTS).forEach((k, i) => {
+  const o = document.createElement('option');
+  o.value = k; o.textContent = k;
+  if (i === 0) o.selected = true;
+  sel.appendChild(o);
+});
+
+function setHint(t) { $('hint').textContent = t; }
+function setBar(p) {
+  $('bar').style.display = p == null ? 'none' : 'block';
+  $('bar').firstElementChild.style.width = (p == null ? 0 : p * 100) + '%';
+}
+
+async function loadFont(name) {
+  if (fontCache.has(name)) return fontCache.get(name);
+  const res = await fetch(FONTS[name]);
+  if (!res.ok) throw new Error('字体加载失败: ' + FONTS[name]);
+  const total = Number(res.headers.get('Content-Length')) || 0;
+  const reader = res.body.getReader();
+  const chunks = []; let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); got += value.length;
+    setBar(total ? got / total : null);
+    setHint(`正在加载字体 ${(got / 1048576).toFixed(1)} MB${total ? ' / ' + (total / 1048576).toFixed(1) + ' MB' : ''}`);
+  }
+  const buf = new Uint8Array(got);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.length; }
+  fontCache.set(name, buf);
+  return buf;
+}
+
+$('demo').onclick = () => {
+  $('names').value = ['兰小毅', '王业蕃', '于宛莹', 'John LI', 'William Liu', 'Christopher Robinson'].join('\n');
+};
+
+$('gen').onclick = async () => {
+  const raw = $('names').value;
+  if (!raw.trim()) { alert('请先输入姓名'); return; }
+  $('gen').disabled = true; $('gen').textContent = '生成中…';
+  const t0 = performance.now();
+  try {
+    const fontBytes = await loadFont($('fontSel').value);
+    setBar(null);
+    setHint('正在排版…');
+    const { bytes, info } = await XikaCore.buildXikaPdf({
+      PDFLib: window.PDFLib, fontkit: window.fontkit,
+      fontBytes, names: raw,
+    });
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+    blobUrl = URL.createObjectURL(blob);
+    $('pv').src = blobUrl;
+    $('pv').style.display = 'block';
+    $('slot').style.display = 'none';
+    $('dl').disabled = false; $('pr').disabled = false;
+
+    const ms = Math.round(performance.now() - t0);
+    setHint(`完成：${info.length} 人 / ${info.length} 页，耗时 ${ms} ms`);
+    $('warn').innerHTML = '';
+    $('info').innerHTML = '<table><tr><th>姓名</th><th>排布</th><th>字号</th></tr>'
+      + info.map(i => `<tr><td>${i.name}</td><td>${i.lines.join(' / ')}</td><td>${i.size}pt</td></tr>`).join('')
+      + '</table>';
+  } catch (e) {
+    console.error(e);
+    alert('生成失败：' + (e && e.message ? e.message : e));
+    setHint('生成失败，请重试');
+    setBar(null);
+  } finally {
+    $('gen').disabled = false; $('gen').textContent = '生成 PDF';
+  }
+};
+
+$('dl').onclick = () => {
+  if (!blobUrl) return;
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  const first = XikaCore.normalize($('names').value);
+  a.download = first.length > 1 ? `席卡_${first[0]}等${first.length}人.pdf` : `席卡_${first[0] || '席卡'}.pdf`;
+  a.click();
+};
+
+$('pr').onclick = () => {
+  if (!blobUrl) return;
+  const w = window.open(blobUrl, '_blank');
+  if (w) w.addEventListener('load', () => { try { w.print(); } catch (e) {} });
+};
+</script>
+</body>
+</html>
